@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const jwt = require("jsonwebtoken");
 const app = express();
 const port = process.env.PORT || 5000;
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
@@ -20,6 +21,25 @@ const client = new MongoClient(uri, {
   },
 });
 
+const verifyJWT = (req, res, next) => {
+  const authorization = req.headers.authorization;
+  if (!authorization) {
+    return res
+      .status(401)
+      .send({ error: true, message: "unauthorized access" });
+  }
+  const token = authorization.split(" ")[1];
+  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, function (error, decode) {
+    if (error) {
+      return res
+        .status(403)
+        .send({ error: true, message: "unauthorized access" });
+    }
+    res.decode = decode;
+    next();
+  });
+};
+
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
@@ -28,6 +48,17 @@ async function run() {
     const servicesCollection = client.db("carDoctor").collection("services");
     const bookingCollection = client.db("carDoctor").collection("bookings");
 
+    // jwt
+
+    app.post("/jwt", (req, res) => {
+      const user = req.body;
+      const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
+        expiresIn: "1h",
+      });
+      res.send({ token });
+    });
+
+    // Service
     app.get("/services", async (req, res) => {
       const cursor = servicesCollection.find();
       const result = await cursor.toArray();
@@ -51,7 +82,7 @@ async function run() {
       // Booking
       app.post("/bookings", async (req, res) => {
         const order = req.body;
-        console.log(order);
+        // console.log(order);
         const result = await bookingCollection.insertOne(order);
         res.send(result);
       });
@@ -61,8 +92,13 @@ async function run() {
       console.log(result);
     });
 
-    app.get("/bookings", async (req, res) => {
-      console.log(req.query.email);
+    app.get("/bookings", verifyJWT, async (req, res) => {
+      const decode = res.decode;
+      if(decode.email !== req.query.email){
+        return res
+        .status(403)
+        .send({ error: true, message: "forbidden access" });
+      }
       let query = {};
       if (req.query?.email) {
         query = { email: req.query.email };
@@ -73,28 +109,31 @@ async function run() {
     });
 
     // booking delete
-    app.delete("/bookings/:id", async(req,res)=>{
+    app.delete("/bookings/:id", async (req, res) => {
       const id = req.params.id;
-      const query = {_id: new ObjectId(id)}
-      const result = await bookingCollection.deleteOne(query)
+      const query = { _id: new ObjectId(id) };
+      const result = await bookingCollection.deleteOne(query);
       res.send(result);
       console.log(id);
-    })
+    });
 
     // booking approve
-    app.patch('/bookings/:id', async(req,res)=>{
+    app.patch("/bookings/:id", async (req, res) => {
       const id = req.params.id;
       const user = req.body;
       console.log(user);
-      const selectedOrder = {_id: new ObjectId(id)}
+      const selectedOrder = { _id: new ObjectId(id) };
       const updateOrder = {
         $set: {
-          status : user.status
-        }
-      }
-      const result = await bookingCollection.updateOne(selectedOrder, updateOrder);
+          status: user.status,
+        },
+      };
+      const result = await bookingCollection.updateOne(
+        selectedOrder,
+        updateOrder
+      );
       res.send(result);
-    })
+    });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
